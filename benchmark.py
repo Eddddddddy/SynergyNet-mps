@@ -19,11 +19,13 @@ from math import cos, atan2, asin
 import cv2
 
 from utils.params import ParamsPack
+
 param_pack = ParamsPack()
+
 
 def parse_pose(param):
     '''parse parameters into pose'''
-    if len(param)==62:
+    if len(param) == 62:
         param = param * param_pack.param_std[:62] + param_pack.param_mean[:62]
     else:
         param = param * param_pack.param_std + param_pack.param_mean
@@ -33,8 +35,9 @@ def parse_pose(param):
     pose = matrix2angle(R)  # yaw, pitch, roll
     return P, pose
 
+
 def P2sRt(P):
-    '''decomposing camera matrix P'''   
+    '''decomposing camera matrix P'''
     t3d = P[:, 3]
     R1 = P[0:1, :3]
     R2 = P[1:2, :3]
@@ -44,6 +47,7 @@ def P2sRt(P):
     r3 = np.cross(r1, r2)
     R = np.concatenate((r1, r2, r3), 0)
     return s, R, t3d
+
 
 def matrix2angle(R):
     '''convert matrix to angle'''
@@ -60,10 +64,11 @@ def matrix2angle(R):
         else:
             x = -np.pi / 2
             y = -z + atan2(-R[0, 1], -R[0, 2])
-    
-    rx, ry, rz = x*180/np.pi, y*180/np.pi, z*180/np.pi
+
+    rx, ry, rz = x * 180 / np.pi, y * 180 / np.pi, z * 180 / np.pi
 
     return [rx, ry, rz]
+
 
 def parsing(param):
     p_ = param[:, :12].reshape(-1, 3, 4)
@@ -72,6 +77,7 @@ def parsing(param):
     alpha_shp = param[:, 12:52].reshape(-1, 40, 1)
     alpha_exp = param[:, 52:62].reshape(-1, 10, 1)
     return p, offset, alpha_shp, alpha_exp
+
 
 def reconstruct_vertex(param, data_param, whitening=True, transform=True, lmk_pts=68):
     """
@@ -90,30 +96,35 @@ def reconstruct_vertex(param, data_param, whitening=True, transform=True, lmk_pt
     else:
         raise NotImplementedError("Parameter length must be 62")
 
-    vertex = p @ (u_base + w_shp_base @ alpha_shp + w_exp_base @ alpha_exp).contiguous().view(-1, lmk_pts, 3).transpose(1,2) + offset
+    vertex = p @ (u_base + w_shp_base @ alpha_shp + w_exp_base @ alpha_exp).contiguous().view(-1, lmk_pts, 3).transpose(
+        1, 2) + offset
     if transform:
         vertex[:, 1, :] = param_pack.std_size + 1 - vertex[:, 1, :]
 
     return vertex
 
+
 def extract_param(checkpoint_fp, root='', args=None, filelists=None, device_ids=[0],
                   batch_size=128, num_workers=4):
-    map_location = {'cuda:{}'.format(i): 'cuda:0' for i in range(8)}
-    checkpoint = torch.load(checkpoint_fp, map_location=map_location)['state_dict']
-    
+    # map_location = {'cuda:{}'.format(i): 'cuda:0' for i in range(8)}
+    # checkpoint = torch.load(checkpoint_fp, map_location=map_location)['state_dict']
+    checkpoint = torch.load(checkpoint_fp, map_location=torch.device('mps'))['state_dict']
+
     # Need to take off these for different numbers of base landmark points
     # del checkpoint['module.u_base']
     # del checkpoint['module.w_shp_base']
     # del checkpoint['module.w_exp_base']
 
-    torch.cuda.set_device(device_ids[0])
+    # torch.cuda.set_device(device_ids[0])
 
     model = SynergyNet(args)
-    model = nn.DataParallel(model, device_ids=device_ids).cuda()
+    # model = nn.DataParallel(model, device_ids=device_ids).cuda()
+    model = nn.DataParallel(model, device_ids=device_ids).to('mps')
     model.load_state_dict(checkpoint, strict=False)
 
     dataset = DDFATestDataset(filelists=filelists, root=root,
-                              transform=transforms.Compose([ToTensor(), CenterCrop(5, mode='test') , Normalize(mean=127.5, std=128)  ]))
+                              transform=transforms.Compose(
+                                  [ToTensor(), CenterCrop(5, mode='test'), Normalize(mean=127.5, std=128)]))
     data_loader = data.DataLoader(dataset, batch_size=batch_size, num_workers=num_workers)
 
     cudnn.benchmark = True
@@ -123,13 +134,14 @@ def extract_param(checkpoint_fp, root='', args=None, filelists=None, device_ids=
     outputs = []
     with torch.no_grad():
         for _, inputs in enumerate(data_loader):
-            inputs = inputs.cuda()
+            # inputs = inputs.cuda()
+            inputs = inputs.to('mps')
             output = model.module.forward_test(inputs)
 
             for i in range(output.shape[0]):
-              param_prediction = output[i].cpu().numpy().flatten()
+                param_prediction = output[i].cpu().numpy().flatten()
 
-              outputs.append(param_prediction)
+                outputs.append(param_prediction)
         outputs = np.array(outputs, dtype=np.float32)
 
     print('Extracting params take {: .3f}s'.format(time.time() - end))
@@ -138,42 +150,46 @@ def extract_param(checkpoint_fp, root='', args=None, filelists=None, device_ids=
 
 def _benchmark_aflw2000(outputs):
     '''Calculate the error statistics.'''
-    return ana_alfw2000(calc_nme_alfw2000(outputs,option='ori'))
+    return ana_alfw2000(calc_nme_alfw2000(outputs, option='ori'))
+
 
 # AFLW2000 facial alignment
 img_list = sorted(glob.glob('./aflw2000_data/AFLW2000-3D_crop/*.jpg'))
+
+
 def benchmark_aflw2000_params(params, data_param):
     '''Reconstruct the landmark points and calculate the statistics'''
     outputs = []
-    params = torch.Tensor(params).cuda()
+    # params = torch.Tensor(params).cuda()
+    params = torch.Tensor(params).to('mps')
 
     batch_size = 50
     num_samples = params.shape[0]
     iter_num = math.floor(num_samples / batch_size)
     residual = num_samples % batch_size
-    for i in range(iter_num+1):
+    for i in range(iter_num + 1):
         if i == iter_num:
             if residual == 0:
                 break
-            batch_data = params[i*batch_size: i*batch_size + residual]
+            batch_data = params[i * batch_size: i * batch_size + residual]
             lm = reconstruct_vertex(batch_data, data_param, lmk_pts=68)
             lm = lm.cpu().numpy()
             for j in range(residual):
                 outputs.append(lm[j, :2, :])
         else:
-            batch_data = params[i*batch_size: (i+1)*batch_size]
+            batch_data = params[i * batch_size: (i + 1) * batch_size]
             lm = reconstruct_vertex(batch_data, data_param, lmk_pts=68)
             lm = lm.cpu().numpy()
             for j in range(batch_size):
                 if i == 0:
-                    #plot the first 50 samples for validation
-                    bkg = cv2.imread(img_list[i*batch_size+j],-1)
+                    # plot the first 50 samples for validation
+                    bkg = cv2.imread(img_list[i * batch_size + j], -1)
                     lm_sample = lm[j]
-                    c0 = np.clip((lm_sample[1,:]).astype(np.int64), 0, 119)
-                    c1 = np.clip((lm_sample[0,:]).astype(np.int64), 0, 119)
-                    for y, x, in zip([c0,c0,c0-1,c0-1],[c1,c1-1,c1,c1-1]):
-                        bkg[y, x, :] = np.array([233,193,133])
-                    cv2.imwrite(f'./results/{i*batch_size+j}.png', bkg)
+                    c0 = np.clip((lm_sample[1, :]).astype(np.int64), 0, 119)
+                    c1 = np.clip((lm_sample[0, :]).astype(np.int64), 0, 119)
+                    for y, x, in zip([c0, c0, c0 - 1, c0 - 1], [c1, c1 - 1, c1, c1 - 1]):
+                        bkg[y, x, :] = np.array([233, 193, 133])
+                    cv2.imwrite(f'./results/{i * batch_size + j}.png', bkg)
 
                 outputs.append(lm[j, :2, :])
     return _benchmark_aflw2000(outputs)
@@ -192,28 +208,29 @@ def benchmark_FOE(params):
     if not os.path.isfile(exclude_aflw2000) or not os.path.isfile(skip_aflw2000):
         raise RuntimeError('Missing data')
 
-    pose_GT = np.load(exclude_aflw2000) 
+    pose_GT = np.load(exclude_aflw2000)
     skip_indices = np.load(skip_aflw2000)
-    pose_mat = np.ones((pose_GT.shape[0],3))
+    pose_mat = np.ones((pose_GT.shape[0], 3))
 
     idx = 0
     for i in range(params.shape[0]):
         if i in skip_indices:
             continue
         P, angles = parse_pose(params[i])
-        angles[0], angles[1], angles[2] = angles[1], angles[0], angles[2] # we decode raw-ptich-yaw order
-        pose_mat[idx,:] = np.array(angles)
+        angles[0], angles[1], angles[2] = angles[1], angles[0], angles[2]  # we decode raw-ptich-yaw order
+        pose_mat[idx, :] = np.array(angles)
         idx += 1
 
-    pose_analyis = np.mean(np.abs(pose_mat-pose_GT),axis=0) # pose GT uses [pitch-yaw-roll] order
+    pose_analyis = np.mean(np.abs(pose_mat - pose_GT), axis=0)  # pose GT uses [pitch-yaw-roll] order
     MAE = np.mean(pose_analyis)
     yaw = pose_analyis[1]
     pitch = pose_analyis[0]
     roll = pose_analyis[2]
-    msg = 'Mean MAE = %3.3f (in deg), [yaw,pitch,roll] = [%3.3f, %3.3f, %3.3f]'%(MAE, yaw, pitch, roll)
+    msg = 'Mean MAE = %3.3f (in deg), [yaw,pitch,roll] = [%3.3f, %3.3f, %3.3f]' % (MAE, yaw, pitch, roll)
     print('\nFace orientation estimation:')
     print(msg)
     return msg
+
 
 def benchmark(checkpoint_fp, args):
     '''benchmark validation pipeline'''
@@ -229,7 +246,7 @@ def benchmark(checkpoint_fp, args):
         params, data_param = extract_param(
             checkpoint_fp=checkpoint_fp,
             root=root,
-            args= args,
+            args=args,
             filelists=filelists,
             device_ids=device_ids,
             batch_size=128)
@@ -239,6 +256,7 @@ def benchmark(checkpoint_fp, args):
         info_out_foe = benchmark_FOE(params)
 
     aflw2000()
+
 
 def main():
     parser = argparse.ArgumentParser(description='SynergyNet benchmark on AFLW2000-3D')

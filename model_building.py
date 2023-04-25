@@ -66,7 +66,9 @@ class SynergyNet(nn.Module):
 	def __init__(self, args):
 		super(SynergyNet, self).__init__()
 		self.triangles = sio.loadmat('./3dmm_data/tri.mat')['tri'] -1
-		self.triangles = torch.Tensor(self.triangles.astype(np.int64)).long().cuda()
+		# self.triangles = torch.Tensor(self.triangles.astype(np.int64)).long().cuda()
+		self.triangles = torch.Tensor(self.triangles.astype(np.int64)).long().to('mps')
+
 		self.img_size = args.img_size
 		# Image-to-parameter
 		self.I2P = I2P(args)
@@ -84,11 +86,17 @@ class SynergyNet(nn.Module):
 					'loss_Param_S1S2': 0.0,
 					}
 
-		self.register_buffer('param_mean', torch.Tensor(param_pack.param_mean).cuda(non_blocking=True))
-		self.register_buffer('param_std', torch.Tensor(param_pack.param_std).cuda(non_blocking=True))
-		self.register_buffer('w_shp', torch.Tensor(param_pack.w_shp).cuda(non_blocking=True))
-		self.register_buffer('u', torch.Tensor(param_pack.u).cuda(non_blocking=True))
-		self.register_buffer('w_exp', torch.Tensor(param_pack.w_exp).cuda(non_blocking=True))
+		# self.register_buffer('param_mean', torch.Tensor(param_pack.param_mean).cuda(non_blocking=True))
+		# self.register_buffer('param_std', torch.Tensor(param_pack.param_std).cuda(non_blocking=True))
+		# self.register_buffer('w_shp', torch.Tensor(param_pack.w_shp).cuda(non_blocking=True))
+		# self.register_buffer('u', torch.Tensor(param_pack.u).cuda(non_blocking=True))
+		# self.register_buffer('w_exp', torch.Tensor(param_pack.w_exp).cuda(non_blocking=True))
+
+		self.register_buffer('param_mean', torch.Tensor(param_pack.param_mean).to('mps'))
+		self.register_buffer('param_std', torch.Tensor(param_pack.param_std).to('mps'))
+		self.register_buffer('w_shp', torch.Tensor(param_pack.w_shp).to('mps'))
+		self.register_buffer('u', torch.Tensor(param_pack.u).to('mps'))
+		self.register_buffer('w_exp', torch.Tensor(param_pack.w_exp).to('mps'))
 
 		# If doing only offline evaluation, use these
 		# self.u_base = torch.Tensor(param_pack.u_base).cuda(non_blocking=True)
@@ -96,9 +104,12 @@ class SynergyNet(nn.Module):
 		# self.w_exp_base = torch.Tensor(param_pack.w_exp_base).cuda(non_blocking=True)
 
 		# Online training needs these to parallel
-		self.register_buffer('u_base', torch.Tensor(param_pack.u_base).cuda(non_blocking=True))
-		self.register_buffer('w_shp_base', torch.Tensor(param_pack.w_shp_base).cuda(non_blocking=True))
-		self.register_buffer('w_exp_base', torch.Tensor(param_pack.w_exp_base).cuda(non_blocking=True))
+		# self.register_buffer('u_base', torch.Tensor(param_pack.u_base).cuda(non_blocking=True))
+		# self.register_buffer('w_shp_base', torch.Tensor(param_pack.w_shp_base).cuda(non_blocking=True))
+		# self.register_buffer('w_exp_base', torch.Tensor(param_pack.w_exp_base).cuda(non_blocking=True))
+		self.register_buffer('u_base', torch.Tensor(param_pack.u_base).to('mps'))
+		self.register_buffer('w_shp_base', torch.Tensor(param_pack.w_shp_base).to('mps'))
+		self.register_buffer('w_exp_base', torch.Tensor(param_pack.w_exp_base).to('mps'))
 		self.keypoints = torch.Tensor(param_pack.keypoints).long()
  
 		self.data_param = [self.param_mean, self.param_std, self.w_shp_base, self.u_base, self.w_exp_base]
