@@ -1,6 +1,7 @@
 # coding: utf-8
 
 import os.path as osp
+import time
 
 import torch
 import numpy as np
@@ -49,6 +50,7 @@ class FaceBoxes:
         net = FaceBoxesNet(phase='test', size=None, num_classes=2)  # initialize detector
         self.net = load_model(net, pretrained_path=pretrained_path, load_to_cpu=True)
         self.net.eval()
+        # self.net = self.net.to('mps')
 
         for p in self.net.parameters():
             p.requires_grad_(False)
@@ -90,6 +92,8 @@ class FaceBoxes:
         img = img.transpose(2, 0, 1)
         img = torch.from_numpy(img).unsqueeze(0)
 
+        # img = img.to('mps')
+
         _t['forward_pass'].tic()
         loc, conf = self.net(img)  # forward pass
         _t['forward_pass'].toc()
@@ -97,7 +101,7 @@ class FaceBoxes:
         priorbox = PriorBox(image_size=(im_height, im_width))
         priors = priorbox.forward()
         prior_data = priors.data
-        boxes = decode(loc.data.squeeze(0), prior_data, cfg['variance'])
+        boxes = decode(loc.cpu().data.squeeze(0), prior_data, cfg['variance'])
         if scale_flag:
             boxes = boxes * scale_bbox / scale / resize
         else:
